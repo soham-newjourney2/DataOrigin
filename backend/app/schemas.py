@@ -145,6 +145,9 @@ class ChainStatusOut(BaseModel):
     contract_deployed: bool
     redeploy_needed: bool
     error: str | None
+    network: str | None = None    # RPC host only (never the full URL, which may contain an API key)
+    explorer: str | None = None   # block explorer base URL for known public networks
+    signer: str | None = None     # public address that signs registrations (public-network mode)
 
 
 class ChainRegisterIn(BaseModel):
@@ -179,6 +182,7 @@ class OnChainOut(BaseModel):
     timestamp: str | None
     registrant: str | None
     tx_hash: str | None
+    explorer: str | None = None
 
 
 class ChainVerifyOut(BaseModel):

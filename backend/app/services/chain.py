@@ -1,8 +1,16 @@
-"""On-chain hash registration (local Hardhat node via web3.py) with a local-verification fallback."""
+"""On-chain hash registration via web3.py, with a local-verification fallback.
+
+Two modes:
+- local (default): a Hardhat node; contract address/ABI from CHAIN_DEPLOYMENT_FILE; txs sent from the node's
+  unlocked account.
+- public network (e.g. Sepolia): CHAIN_CONTRACT_ADDRESS + the bundled ABI; txs signed with CHAIN_PRIVATE_KEY.
+"""
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
+from eth_account import Account
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,8 +24,9 @@ from app.services import audit, ml, storage
 from app.services.hashing import sha256_file
 
 ARTIFACT_TYPES = ("dataset_version", "experiment")
-RPC_TIMEOUT_S = 5
-RECEIPT_TIMEOUT_S = 15
+RPC_TIMEOUT_S = 10
+ABI_FILE = Path(__file__).resolve().parent.parent / "abi" / "ProvenanceRegistry.json"
+EXPLORERS = {1: "https://etherscan.io", 11155111: "https://sepolia.etherscan.io", 17000: "https://holesky.etherscan.io"}
 RESET_NOTE = ("The chain was reset after this was registered (the local Hardhat node keeps data in memory), so its "
               "on-chain record is gone. The artifact itself is unchanged. Use Retry pending or Register to re-anchor it.")
 
@@ -29,11 +38,29 @@ class ChainUnavailable(Exception):
 
 
 def _deployment(settings: Settings) -> dict:
+    """{address, abi, chainId?}: from CHAIN_CONTRACT_ADDRESS + bundled ABI, else from the deploy-script file."""
+    if settings.chain_contract_address:
+        return {"address": settings.chain_contract_address,
+                "abi": json.loads(ABI_FILE.read_text(encoding="utf-8")), "chainId": None}
     path = settings.chain_deployment_file
     if not path.is_file():
         raise ChainUnavailable(f"no deployment file at {path}; run `npx hardhat run scripts/deploy.js "
-                               f"--network localhost` in contracts/")
+                               f"--network localhost` in contracts/, or set CHAIN_CONTRACT_ADDRESS")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _signer(settings: Settings):
+    """LocalAccount for CHAIN_PRIVATE_KEY, or None (local node: use its unlocked account)."""
+    if not settings.chain_private_key:
+        return None
+    try:
+        return Account.from_key(settings.chain_private_key)
+    except Exception as exc:  # noqa: BLE001 — never echo the key itself
+        raise ChainUnavailable("CHAIN_PRIVATE_KEY is not a valid private key") from exc
+
+
+def _web3(settings: Settings) -> Web3:
+    return Web3(Web3.HTTPProvider(settings.chain_rpc_url, request_kwargs={"timeout": RPC_TIMEOUT_S}))
 
 
 def connect(settings: Settings):
@@ -41,24 +68,62 @@ def connect(settings: Settings):
     if not settings.chain_enabled:
         raise ChainUnavailable("chain disabled (CHAIN_ENABLED=false)")
     dep = _deployment(settings)
-    w3 = Web3(Web3.HTTPProvider(settings.chain_rpc_url, request_kwargs={"timeout": RPC_TIMEOUT_S}))
+    signer = _signer(settings)
+    w3 = _web3(settings)
     if not w3.is_connected():
-        raise ChainUnavailable(f"cannot reach node at {settings.chain_rpc_url}")
+        raise ChainUnavailable(f"cannot reach node at {rpc_label(settings.chain_rpc_url)}")
     address = Web3.to_checksum_address(dep["address"])
     try:
         code = w3.eth.get_code(address)
+        dep = {**dep, "chainId": dep.get("chainId") or w3.eth.chain_id}
     except Exception as exc:  # noqa: BLE001
-        raise ChainUnavailable(f"node error: {exc}") from exc
+        raise ChainUnavailable(redact(settings, f"node error: {exc}")) from exc
     if not code or code in (b"", b"\x00"):
-        raise ChainUnavailable(f"no contract code at {address}; the Hardhat node is in-memory, so redeploy "
-                               f"after a restart")
-    w3.eth.default_account = w3.eth.accounts[0]  # local node only
+        hint = ("check CHAIN_CONTRACT_ADDRESS and that CHAIN_RPC_URL is the same network" if settings.chain_contract_address
+                else "the Hardhat node is in-memory, so redeploy after a restart")
+        raise ChainUnavailable(f"no contract code at {address}; {hint}")
+    w3.eth.default_account = signer.address if signer else w3.eth.accounts[0]
     return w3, w3.eth.contract(address=address, abi=dep["abi"]), dep
 
 
+def _send_register(w3, contract, settings: Settings, record: ChainRecord):
+    """Send register(); signed locally with CHAIN_PRIVATE_KEY on public networks. Returns the tx hash."""
+    call = contract.functions.register(_to_bytes32(record.sha256), record.artifact_type, str(record.artifact_id))
+    signer = _signer(settings)
+    if signer is None:
+        return call.transact()
+    tx = call.build_transaction({"from": signer.address, "chainId": w3.eth.chain_id,
+                                 "nonce": w3.eth.get_transaction_count(signer.address, "pending")})
+    return w3.eth.send_raw_transaction(signer.sign_transaction(tx).raw_transaction)
+
+
+def explorer_url(chain_id: int | None) -> str | None:
+    return EXPLORERS.get(chain_id)
+
+
+def rpc_label(url: str) -> str:
+    """scheme://host only: hosted RPC URLs carry an API key in the path or query, which must never be shown."""
+    scheme, _, rest = url.partition("://")
+    return f"{scheme}://{rest.split('/', 1)[0].split('?', 1)[0]}" if rest else url
+
+
+def redact(settings: Settings, text: str) -> str:
+    """Strip the RPC URL (and so its API key) from any error text before it is stored or returned."""
+    url = settings.chain_rpc_url
+    text = text.replace(url, rpc_label(url))
+    tail = url.partition("://")[2].partition("/")[2]  # e.g. "v2/<KEY>"
+    return text.replace(tail, "…") if len(tail) >= 8 else text
+
+
 def status(settings: Settings) -> dict:
+    signer = None
+    try:
+        signer = _signer(settings)
+    except ChainUnavailable:
+        pass
     out = {"enabled": settings.chain_enabled, "connected": False, "chain_id": None, "contract_address": None,
-           "contract_deployed": False, "redeploy_needed": False, "error": None}
+           "contract_deployed": False, "redeploy_needed": False, "error": None, "network": rpc_label(settings.chain_rpc_url),
+           "explorer": None, "signer": signer.address if signer else None}
     if not settings.chain_enabled:
         out["error"] = "chain disabled (CHAIN_ENABLED=false)"
         return out
@@ -66,21 +131,27 @@ def status(settings: Settings) -> dict:
         out["contract_address"] = _deployment(settings).get("address")
     except (ChainUnavailable, ValueError) as exc:
         out["error"] = str(exc)
-    w3 = Web3(Web3.HTTPProvider(settings.chain_rpc_url, request_kwargs={"timeout": RPC_TIMEOUT_S}))
+    if settings.chain_private_key and signer is None:
+        out["error"] = "CHAIN_PRIVATE_KEY is not a valid private key"
+    w3 = _web3(settings)
     try:
         out["connected"] = w3.is_connected()
         if out["connected"]:
             out["chain_id"] = w3.eth.chain_id
+            out["explorer"] = explorer_url(out["chain_id"])
             if out["contract_address"]:
                 code = w3.eth.get_code(Web3.to_checksum_address(out["contract_address"]))
                 out["contract_deployed"] = bool(code) and code != b"\x00"
                 if not out["contract_deployed"]:
-                    out["redeploy_needed"] = True
-                    out["error"] = "no contract code at the deployed address (node restarted?); redeploy"
+                    if settings.chain_contract_address:
+                        out["error"] = "no contract at CHAIN_CONTRACT_ADDRESS on this network; check the address and RPC"
+                    else:
+                        out["redeploy_needed"] = True
+                        out["error"] = "no contract code at the deployed address (node restarted?); redeploy"
         else:
-            out["error"] = f"cannot reach node at {settings.chain_rpc_url}"
+            out["error"] = f"cannot reach node at {rpc_label(settings.chain_rpc_url)}"
     except Exception as exc:  # noqa: BLE001
-        out["connected"], out["error"] = False, f"node error: {exc}"
+        out["connected"], out["error"] = False, redact(settings, f"node error: {exc}")
     return out
 
 
@@ -133,10 +204,11 @@ def _iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="microseconds")
 
 
-def _find_tx(contract, sha: str) -> tuple[str | None, int | None]:
-    """tx hash and block of the Registered event for this hash (None if not found)."""
+def _find_tx(contract, sha: str, from_block: int = 0) -> tuple[str | None, int | None]:
+    """tx hash and block of the Registered event for this hash (None if not found, or if the RPC refuses the
+    range — hosted RPCs cap eth_getLogs, so CHAIN_START_BLOCK should be the contract's deployment block)."""
     try:
-        logs = contract.events.Registered.get_logs(from_block=0, argument_filters={"hash": _to_bytes32(sha)})
+        logs = contract.events.Registered.get_logs(from_block=from_block, argument_filters={"hash": _to_bytes32(sha)})
     except Exception:  # noqa: BLE001
         return None, None
     if not logs:
@@ -163,9 +235,9 @@ def _submit(settings: Settings, record: ChainRecord) -> None:
     try:
         existing = _onchain_record(contract, record.sha256)
         if existing is None:
-            tx = contract.functions.register(_to_bytes32(record.sha256), record.artifact_type,
-                                             str(record.artifact_id)).transact()
-            receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=RECEIPT_TIMEOUT_S)
+            tx = _send_register(w3, contract, settings, record)
+            # A timeout here leaves the record pending; a retry adopts the tx if it was mined meanwhile.
+            receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=settings.chain_receipt_timeout)
             if receipt["status"] != 1:
                 record.status, record.error = "failed", "transaction reverted"
                 return
@@ -173,13 +245,13 @@ def _submit(settings: Settings, record: ChainRecord) -> None:
             record.tx_hash = "0x" + bytes(receipt["transactionHash"]).hex().removeprefix("0x")
             record.block_number = receipt["blockNumber"]
         else:
-            record.tx_hash, record.block_number = _find_tx(contract, record.sha256)
+            record.tx_hash, record.block_number = _find_tx(contract, record.sha256, settings.chain_start_block)
         record.status, record.error = "registered", None
         record.registered_at = _iso(existing["timestamp"]) if existing else utcnow_iso()
     except ContractLogicError as exc:
-        record.status, record.error = "failed", f"reverted: {exc}"
+        record.status, record.error = "failed", redact(settings, f"reverted: {exc}")
     except Exception as exc:  # noqa: BLE001 — connection drops mid-call → retry later
-        record.status, record.error = "pending", f"{type(exc).__name__}: {exc}"
+        record.status, record.error = "pending", redact(settings, f"{type(exc).__name__}: {exc}")
 
 
 def _tx_exists(w3, tx_hash: str | None) -> bool:
@@ -293,15 +365,17 @@ def verify(db: Session, settings: Settings, artifact_type: str, artifact_id: int
     try:
         w3, contract, dep = connect(settings)
         found = _onchain_record(contract, db_sha)
-        tx_hash = record.tx_hash if record and record.tx_hash else (_find_tx(contract, db_sha)[0] if found else None)
+        tx_hash = record.tx_hash if record and record.tx_hash else (
+            _find_tx(contract, db_sha, settings.chain_start_block)[0] if found else None)
         on_chain = {"registered": found is not None,
                     "timestamp": _iso(found["timestamp"]) if found else None,
-                    "registrant": found["registrant"] if found else None, "tx_hash": tx_hash}
+                    "registrant": found["registrant"] if found else None, "tx_hash": tx_hash,
+                    "explorer": explorer_url(dep.get("chainId"))}
         chain_reset = record is not None and found is None and _lost_to_reset(w3, contract, dep, record)
     except ChainUnavailable as exc:
         chain_error = str(exc)
     except Exception as exc:  # noqa: BLE001
-        chain_error = f"{type(exc).__name__}: {exc}"
+        chain_error = redact(settings, f"{type(exc).__name__}: {exc}")
 
     if not local_match:
         verdict = "TAMPERED"

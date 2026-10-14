@@ -3,6 +3,14 @@ import { api } from "../api.js";
 import { badge, chainBadge, clear, fmtDate, h, loadAllVersions, loading } from "../components/dom.js";
 import { toast } from "../components/toast.js";
 
+const NETWORK_NAMES = { 1: "Ethereum mainnet", 11155111: "Ethereum Sepolia", 17000: "Ethereum Holesky", 31337: "local Hardhat node" };
+
+/** <code>value</code>, linked to the block explorer when the network has one. */
+function explorerLink(explorer, kind, value) {
+  const code = h("code", {}, value);
+  return explorer ? h("a", { href: `${explorer}/${kind}/${value}`, target: "_blank", rel: "noopener" }, code, " ↗") : code;
+}
+
 const VERDICT = {
   VERIFIED: ["ok", "Local file matches its recorded hash, and the hash is registered on chain."],
   LOCAL_ONLY: ["warn", "Local file matches, but the on-chain record is pending or the chain is unavailable."],
@@ -15,7 +23,12 @@ function statusBanner(st, onRetry) {
   if (!st.enabled) [cls, title, detail] = ["warn", "Chain disabled", "CHAIN_ENABLED=false — registrations are kept as pending and verification is local only."];
   else if (!st.connected) [cls, title, detail] = ["bad", "Chain node unreachable", st.error || "Start the Hardhat node."];
   else if (!st.contract_deployed) [cls, title, detail] = ["bad", "Contract not deployed", st.error || "Run the deploy script."];
-  else [cls, title, detail] = ["ok", "Connected to chain", `chain ${st.chain_id} · contract ${st.contract_address}`];
+  else {
+    const name = NETWORK_NAMES[st.chain_id] || `chain ${st.chain_id}`;
+    [cls, title, detail] = ["ok", `Connected to ${name}`,
+      h("span", {}, "contract ", explorerLink(st.explorer, "address", st.contract_address),
+        st.signer ? h("span", {}, " · signer ", explorerLink(st.explorer, "address", st.signer)) : null)];
+  }
   const hint = st.redeploy_needed
     ? h("div", { class: "small" }, "The Hardhat node is in-memory: after a restart run ", h("code", {}, "npx hardhat run scripts/deploy.js --network localhost"), " in contracts/.")
     : null;
@@ -43,8 +56,8 @@ function verdictView(v) {
       h("dt", {}, "Chain record"), h("dd", {}, chainBadge(v.chain_status)),
       h("dt", {}, "On chain"), h("dd", {}, oc === null ? h("span", { class: "muted" }, v.chain_error || "unavailable")
         : oc.registered ? h("div", {}, badge("registered", "ok"), ` ${fmtDate(oc.timestamp)}`,
-          h("div", { class: "small muted" }, "registrant ", h("code", {}, oc.registrant)),
-          oc.tx_hash ? h("div", { class: "small muted" }, "tx ", h("code", {}, oc.tx_hash)) : null)
+          h("div", { class: "small muted" }, "registrant ", explorerLink(oc.explorer, "address", oc.registrant)),
+          oc.tx_hash ? h("div", { class: "small muted" }, "tx ", explorerLink(oc.explorer, "tx", oc.tx_hash)) : null)
           : badge("not on chain", "neutral"))));
 }
 

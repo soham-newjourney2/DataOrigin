@@ -234,3 +234,62 @@ def test_startup_resync_is_silent_when_chain_disabled_or_down(client, version):
     _set(client, chain_enabled=True, chain_rpc_url="http://127.0.0.1:1")
     chain.resync_on_startup(client.app.state.settings)  # node unreachable
     assert len(client.get("/api/audit/events?limit=1000").json()) == before
+
+
+# --- public-network mode (Sepolia-style: address + bundled ABI + private-key signing) --------------------------
+
+def test_rpc_url_api_keys_are_redacted():
+    s = dataclasses.replace(chain_settings_for_redaction(), chain_rpc_url="https://eth-sepolia.g.alchemy.com/v2/SECRETKEY123")
+    assert chain.rpc_label(s.chain_rpc_url) == "https://eth-sepolia.g.alchemy.com"
+    msg = chain.redact(s, "HTTPError 401 for url: https://eth-sepolia.g.alchemy.com/v2/SECRETKEY123 (also v2/SECRETKEY123)")
+    assert "SECRETKEY123" not in msg and "eth-sepolia.g.alchemy.com" in msg
+
+
+def chain_settings_for_redaction():
+    from app.config import get_settings
+    return get_settings()
+
+
+def test_private_key_is_never_in_settings_repr(monkeypatch):
+    from app.config import get_settings
+    from eth_account import Account
+    key = Account.create().key.hex()
+    monkeypatch.setenv("CHAIN_PRIVATE_KEY", key)
+    monkeypatch.setenv("CHAIN_CONTRACT_ADDRESS", "0x" + "11" * 20)
+    s = get_settings()
+    assert s.chain_private_key == key and key not in repr(s) and key.removeprefix("0x") not in repr(s)
+    assert s.chain_contract_address == "0x" + "11" * 20
+
+
+def test_address_mode_uses_bundled_abi(client):
+    _set(client, chain_contract_address="0x" + "22" * 20)
+    dep = chain._deployment(client.app.state.settings)
+    names = {e.get("name") for e in dep["abi"]}
+    assert dep["address"] == "0x" + "22" * 20 and {"register", "getRecord", "isRegistered", "Registered"} <= names
+
+
+def test_bad_private_key_is_reported_without_echo(client):
+    _set(client, chain_enabled=True, chain_private_key="not-a-key", chain_rpc_url="http://127.0.0.1:1")
+    st = client.get("/api/chain/status").json()
+    assert "not a valid private key" in (st["error"] or "") or st["connected"] is False
+    assert "not-a-key" not in str(st)
+
+
+@pytest.mark.chain
+def test_chain_private_key_signing_path(client, chain_on, version):
+    """Exactly the Sepolia code path, run against the local node: a fresh funded wallet signs the tx."""
+    from eth_account import Account
+    from web3 import Web3
+    settings = client.app.state.settings
+    w3 = Web3(Web3.HTTPProvider(settings.chain_rpc_url))
+    wallet = Account.create()
+    w3.eth.wait_for_transaction_receipt(
+        w3.eth.send_transaction({"from": w3.eth.accounts[0], "to": wallet.address, "value": w3.to_wei(1, "ether")}))
+    _set(client, chain_private_key=wallet.key.hex(), chain_contract_address=chain_on["contract_address"])
+
+    st = client.get("/api/chain/status").json()
+    assert st["contract_deployed"] and st["signer"] == wallet.address
+    rec = _register(client, "dataset_version", version["id"]).json()
+    assert rec["status"] == "registered" and rec["tx_hash"].startswith("0x")
+    v = _verify(client, "dataset_version", version["id"])
+    assert v["verdict"] == "VERIFIED" and v["on_chain"]["registrant"] == wallet.address

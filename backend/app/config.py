@@ -1,6 +1,6 @@
 """Settings: defaults < backend/.env < process environment. Relative paths resolve against backend/."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import Request
@@ -17,6 +17,11 @@ DEFAULTS = {
     "DEMO_MODE": "true",
     "CORS_ORIGINS": "http://localhost:8000",
     "FRONTEND_DIR": "../frontend",
+    # Public-network mode (e.g. Sepolia). Leave empty for the local Hardhat setup.
+    "CHAIN_CONTRACT_ADDRESS": "",   # set → use this address + the bundled ABI instead of CHAIN_DEPLOYMENT_FILE
+    "CHAIN_PRIVATE_KEY": "",        # set → sign transactions with this key instead of the node's unlocked account
+    "CHAIN_START_BLOCK": "0",       # block the contract was deployed in (bounds event-log searches)
+    "CHAIN_RECEIPT_TIMEOUT": "120",  # seconds to wait for a transaction to be mined
 }
 
 
@@ -31,6 +36,10 @@ class Settings:
     demo_mode: bool
     cors_origins: list[str]
     frontend_dir: Path
+    chain_contract_address: str = ""
+    chain_private_key: str = field(default="", repr=False)  # never printed or logged
+    chain_start_block: int = 0
+    chain_receipt_timeout: int = 120
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -77,6 +86,10 @@ def get_settings() -> Settings:
         demo_mode=_as_bool(raw["DEMO_MODE"]),
         cors_origins=[o.strip() for o in raw["CORS_ORIGINS"].split(",") if o.strip()],
         frontend_dir=resolve_path(raw["FRONTEND_DIR"]),
+        chain_contract_address=raw["CHAIN_CONTRACT_ADDRESS"].strip(),
+        chain_private_key=raw["CHAIN_PRIVATE_KEY"].strip(),
+        chain_start_block=int(raw["CHAIN_START_BLOCK"] or 0),
+        chain_receipt_timeout=int(raw["CHAIN_RECEIPT_TIMEOUT"] or 120),
     )
 
 
