@@ -1,21 +1,64 @@
 # DataOrigin
 
-Provenance and reproducibility for research datasets and ML experiments.
+**Know where your data came from, and prove nobody changed it.**
 
-You upload a dataset, run a quality analysis, and save each change as an immutable version. DataOrigin then traces the lineage and runs the ML experiments. It registers the data and experiment hashes on chain, so anyone can verify them later, and produces a reproducibility report.
+DataOrigin keeps track of research datasets and the machine-learning results built on them. Every version is fingerprinted, every change is traced, every experiment can be re-run, and the important fingerprints are anchored on a blockchain. When someone asks *"which data was this model trained on, and has it changed since?"*, you have an answer you can show, not just one you can say.
 
-Every dataset version is stored with its SHA-256 hash, and every action goes into a hash-chained audit log. Each experiment records its data hash, configuration, seed, metrics and environment. Hashes are registered on a local Ethereum node (Hardhat), and when the chain is unavailable, verification falls back to the local hashes.
+---
 
-The web UI has two themes, switchable from the sidebar: a light "Liquid Glass" theme and a dark console theme.
+## Why we built it
 
-## Requirements
+It happens on almost every student or research project: a teammate "cleans up" the shared dataset, overwrites the old file, and a week later the model's accuracy has changed and nobody can explain why. Was it the data, the code, or the random seed? The original file is gone, and nothing records what happened in between.
 
-- Python 3.11+ (built and tested on 3.13)
-- Node.js 22+ (for the local Hardhat chain only; the frontend needs no Node)
+Tools for this exist, but they're spread across version control, experiment trackers and spreadsheets, and they take real setup. We wanted one place that answers three questions without any extra effort:
 
-Commands below are for Windows PowerShell. On macOS/Linux, use `.venv/bin/python` instead of `.venv/Scripts/python` and `cp` instead of `copy`.
+1. **What is this data, and where did it come from?**
+2. **What was done to it, and what depends on it?**
+3. **Can we prove that nothing was changed?**
 
-## One-time setup
+## What it does
+
+- **Never loses a version.** Uploads are stored as immutable files with a SHA-256 fingerprint. A change creates a new version; nothing is ever overwritten.
+- **Checks data quality.** Missing values, duplicates, outliers, constant columns and ML-based anomaly detection, rolled into a 0–100 score with plain-English advice ("column `age` has 3 missing values, consider filling with the median").
+- **Fixes problems in one click.** Each finding comes with a suggested cleaning step. Applying it creates a new version and keeps the old one.
+- **Spots drift.** Compare any two versions to see which columns shifted, which categories appeared or vanished, and which columns were added or removed.
+- **Draws the lineage.** An interactive graph shows how every version was derived and which experiments were trained on it. Click any node to see everything downstream that a change would affect.
+- **Makes ML reproducible.** Train scikit-learn models with a recorded seed, settings and environment, then press **Reproduce** to show the result comes out the same.
+- **Verifies on chain.** Register a dataset version or an experiment, and its fingerprint is written to an Ethereum smart contract. Later, **Verify** tells you whether it's `VERIFIED`, `LOCAL_ONLY`, `TAMPERED` or `NOT_REGISTERED`.
+- **Keeps an honest audit log.** Every action is recorded in a hash-chained log, so editing history afterwards is detectable.
+- **Writes the report for you.** One click produces a printable audit report with a reproducibility score and a list of anything missing.
+
+The web app comes in two looks, a light **Liquid Glass** theme and a dark **console** theme, switchable from the sidebar.
+
+## How it works, briefly
+
+```
+upload ──► quality check ──► versions & lineage ──► ML experiment ──► on-chain fingerprint ──► audit report
+```
+
+A FastAPI backend stores metadata in SQLite and files on disk, and it serves the web interface itself, so there's only one app to run. For experiments, DataOrigin hashes the whole setup (data fingerprint, settings, seed, metrics and environment) into a single *commitment*. That commitment, rather than the model file, goes on chain, because saved models aren't byte-for-byte identical even when the model is.
+
+If the blockchain node is down, nothing breaks: registrations wait as `pending` and verification falls back to local fingerprints.
+
+For the full tour of the code, see **[docs/structure.md](docs/structure.md)**.
+
+## Built with
+
+| Part | Technology |
+|---|---|
+| Backend | Python, FastAPI, SQLAlchemy, SQLite |
+| Data and ML | pandas, NumPy, scikit-learn |
+| Blockchain | Solidity smart contract, Hardhat (local Ethereum node), web3.py |
+| Frontend | Plain HTML, CSS and JavaScript: no framework and no build step |
+| Tests | pytest (about 110 tests), Hardhat + Mocha for the contract |
+
+## Getting started
+
+You'll need **Python 3.11+** and **Node.js 22+**. Node is only for the local blockchain; the web app itself doesn't need it.
+
+The commands below are for Windows (PowerShell or Git Bash). On macOS/Linux, use `.venv/bin/python` instead of `.venv/Scripts/python`, and `cp` instead of `copy`.
+
+**1. Install (once)**
 
 ```powershell
 cd backend
@@ -27,77 +70,84 @@ cd ../contracts
 npm install
 ```
 
-## Run (3 terminals)
+**2. Run (three terminals)**
 
-| Terminal | Directory | Command | Notes |
-|---|---|---|---|
-| 1. Chain node | `contracts/` | `npx hardhat node` | Leave it running. The node is **in-memory**. |
-| 2. Deploy | `contracts/` | `npx hardhat run scripts/deploy.js --network localhost` | Run this again after **every** node restart. It writes `backend/app/chain_deployment.json`. |
-| 3. Backend + UI | `backend/` | `.venv/Scripts/python -m uvicorn app.main:app --port 8000` | Then open **http://localhost:8000**. |
+```powershell
+# Terminal 1: start the local blockchain (leave it running)
+cd contracts
+npx hardhat node
 
-Optional: run `.venv/Scripts/python scripts/seed_demo.py` in `backend/`. It loads a ready-made demo story (see below) and you can run it while the server is up.
+# Terminal 2: deploy the contract (repeat after every node restart)
+cd contracts
+npx hardhat run scripts/deploy.js --network localhost
 
-No chain? Set `CHAIN_ENABLED=false` in `backend/.env`, or just don't start the node. Registrations are then saved as `pending`, and verification reports `LOCAL_ONLY`. Once the node is up and deployed, click **Retry pending** on the Verification page.
+# Terminal 3: start the app
+cd backend
+.venv/Scripts/python -m uvicorn app.main:app --port 8000
+```
 
-## Demo (about 3 minutes)
+Open **http://localhost:8000**.
 
-The story: *"A teammate quietly overwrote our dataset, and now nobody can explain why the model changed."*
-
-1. **Seed** (before the demo): run `.venv/Scripts/python scripts/seed_demo.py` with the node deployed. This creates a synthetic student-performance dataset with planted issues (missing values, duplicates, impossible attendance values, a constant column). It then builds the following:
-   - **v1**, the raw upload, with a quality score of about 76
-   - **v2**, the cleaned version, with a quality score of about 92
-   - a random-forest experiment on v2 and a reproduction that matches it
-   - on-chain registrations of v2 and the experiment
-
-   It also writes the teammate's version to `demo_data/student_performance_teammate.csv`.
-2. **Datasets → student-performance (demo):** open v1's **Quality** tab and show the findings and the "Apply suggestion" buttons. Click v2 to show the higher score.
-3. **Experiments → pass/fail random forest:** show the metrics, the seed and the environment, the reproducibility score of 100/100, and **Open report ↗**, which is a printable audit report.
-4. **The teammate overwrites the dataset:** on the dataset page, click **Upload new raw version** and choose `demo_data/student_performance_teammate.csv`.
-   - The new v3 is hashed, versioned and scored. Nothing is silently replaced.
-   - On the **Drift** tab (v3 against v2), `attendance_pct` shows **major** drift, because the teammate rescaled it to 0–1. `parental_education` also drifts, because of a new `unknown` category. Under schema changes, the tab shows `sleep_hours` renamed to `sleep` and the `school` column, which v2 had dropped, back again.
-5. **Lineage:** the graph shows v1 → v2 → v3. Click v1 to see the **downstream impact** list, which includes v3 and the experiments.
-6. **Verification:** pick v2 and click **Verify** to get **VERIFIED**. Then click **Simulate tamper** (demo mode only) and verify again to get **TAMPERED**.
-7. **Audit:** click **Verify log integrity**. The log is intact, and the tamper itself is recorded as an event.
-
-## Tests
+**3. Load the demo data (optional, recommended)**
 
 ```powershell
 cd backend
-.venv/Scripts/python -m pytest -q --tb=short   # the 3 on-chain tests skip unless the node is running and deployed
+.venv/Scripts/python scripts/seed_demo.py
+```
+
+This builds a complete example. A synthetic student-performance dataset with deliberately planted problems is cleaned into a second version, a model is trained on it and reproduced, and both are registered on chain. The dashboard will then have a real story to show.
+
+> **No blockchain handy?** Just skip terminals 1 and 2. Everything still works; registrations stay `pending` until a node is available, and **Retry pending** on the Verification page catches them up later.
+
+## Take the 3-minute tour
+
+Run the demo seed first, then follow the story: *a teammate quietly overwrote our dataset.*
+
+1. **Dashboard:** integrity status, reproducibility score, quality trend and recent activity, all at a glance.
+2. **Datasets → student-performance (demo) → v1 → Quality:** the problems found in the raw data, each with an "Apply suggestion" button. Then look at v2: same data, cleaned, with a much higher score.
+3. **Experiments → pass/fail random forest:** metrics, seed and environment, a reproducibility score of 100/100, and **Open report ↗** for the printable audit report.
+4. **The overwrite:** on the dataset page, click **Upload new raw version** and pick `demo_data/student_performance_teammate.csv`. Nothing is replaced; it becomes v3. On the **Drift** tab, `attendance_pct` lights up as major drift (the teammate rescaled it to 0–1), and a renamed column shows up as a schema change.
+5. **Lineage:** v1 → v2 → v3 with the experiment attached. Click v1 to see everything downstream.
+6. **Verification:** verify v2 and get a green **VERIFIED**. Click **Simulate tamper**, verify again, and watch it turn red: **TAMPERED**.
+7. **Audit log:** **Verify log integrity** confirms the history is intact, and the tamper itself is right there in the log.
+
+## Running the tests
+
+```powershell
+cd backend
+.venv/Scripts/python -m pytest -q
+
 cd ../contracts
 npx hardhat test
 ```
 
-All frontend JS passes `node --check` (this is part of the pytest suite).
+The three on-chain tests run only when the Hardhat node is up and the contract is deployed; otherwise they're skipped. The suite also checks every frontend file with `node --check`.
 
-## Configuration (`backend/.env`)
+<details>
+<summary><strong>Configuration</strong> (<code>backend/.env</code>)</summary>
 
-| Variable | Default | Meaning |
+| Variable | Default | What it does |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./dataorigin.db` | SQLite file. Relative paths resolve against `backend/`. |
-| `STORAGE_DIR` | `../storage` | Immutable dataset files and saved models |
+| `DATABASE_URL` | `sqlite:///./dataorigin.db` | Database location (relative to `backend/`) |
+| `STORAGE_DIR` | `../storage` | Where dataset files and trained models are kept |
 | `MAX_UPLOAD_MB` | `20` | Upload size limit |
-| `CHAIN_ENABLED` | `true` | `false` turns on the local-only fallback |
-| `CHAIN_RPC_URL` | `http://127.0.0.1:8545` | Hardhat node |
+| `CHAIN_ENABLED` | `true` | Set to `false` to run without a blockchain |
+| `CHAIN_RPC_URL` | `http://127.0.0.1:8545` | Address of the Hardhat node |
 | `CHAIN_DEPLOYMENT_FILE` | `app/chain_deployment.json` | Written by the deploy script |
-| `DEMO_MODE` | `true` | Enables `POST /api/dev/tamper/{id}` and the "Simulate tamper" button |
-| `CORS_ORIGINS` | `http://localhost:8000` | Comma-separated list |
-| `FRONTEND_DIR` | `../frontend` | Static UI served at `/` |
+| `DEMO_MODE` | `true` | Enables the "Simulate tamper" button; turn off outside demos |
+| `CORS_ORIGINS` | `http://localhost:8000` | Allowed origins, comma-separated |
+| `FRONTEND_DIR` | `../frontend` | The web app served at `/` |
 
-To start from a clean slate, stop the backend and delete `backend/dataorigin.db` and `storage/`.
+To start completely fresh, stop the app and delete `backend/dataorigin.db` and the `storage/` folder.
 
-## Known limitations
+</details>
 
-- **Local, single-user prototype.** There is no authentication, no roles and no sharing. SQLite and local files only.
-- **The chain is a local Hardhat node and lives in memory.** Restarting it wipes on-chain records. Redeploy afterwards, and the contract comes back at the same address. DataOrigin recognises the reset because the registration transactions are gone too, and it never reports a reset as `TAMPERED`. When the backend starts, it re-registers ("re-anchors") those records automatically. If only the node restarted, click **Retry pending** on the Verification page instead. The re-anchored on-chain timestamp is the new registration time.
-- **Experiments run synchronously** inside the request. There are four predefined scikit-learn algorithms, and you can't upload your own code or models.
-- **Model files aren't byte-reproducible.** Experiments are therefore verified through a *commitment hash* over the data hash, configuration, metrics and environment, not through the model file itself.
-- **The git commit in `env_json`** is the repository's `HEAD` when the run happened. Uncommitted changes aren't captured.
-- **Drift is per column** (PSI with 10 quantile bins, plus category sets). There is no multivariate drift or significance testing.
-- **Files are limited to 20 MB**, CSV, XLSX or JSON. Transforms always save their output as CSV.
-- **Tamper simulation** is a demo feature. Set `DEMO_MODE=false` for anything beyond a demo.
-- **The UI has no automated browser tests.** Its pages are checked with `node --check` and through API-level journey tests.
+## Honest limitations
 
-## How it's built
+This is a hackathon-scale prototype, and we'd rather say so up front:
 
-[docs/structure.md](docs/structure.md) walks through the architecture: the big picture, the repository layout, how each flow works, the smart contract and the trade-offs.
+- **Single user, local only.** No accounts or permissions; data lives in SQLite and local files.
+- **The blockchain is a local test chain.** It lives in memory, so restarting it wipes the on-chain records. DataOrigin notices this, doesn't mistake it for tampering, and re-registers everything when the backend starts. A public testnet would make the timestamps independently verifiable.
+- **Training runs while you wait.** Four predefined scikit-learn models, small datasets, no custom code. Fine for a demo, not for big workloads.
+- **Files up to 20 MB** (CSV, Excel or JSON). Drift analysis is per column.
+
