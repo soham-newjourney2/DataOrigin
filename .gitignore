@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node / Hardhat
+node_modules/
+contracts/artifacts/
+contracts/cache/
+
+# Local data and secrets
+.env
+*.db
+storage/
+demo_data/
+backend/app/chain_deployment.json
+
+# Editors, OS and tooling
+.vscode/
+.idea/
+.claude/
+.DS_Store
+*.log
