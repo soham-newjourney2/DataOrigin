@@ -151,3 +151,38 @@ This is a hackathon-scale prototype, and we'd rather say so up front:
 - **Training runs while you wait.** Four predefined scikit-learn models, small datasets, no custom code. Fine for a demo, not for big workloads.
 - **Files up to 20 MB** (CSV, Excel or JSON). Drift analysis is per column.
 
+## Contributors
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/soham-newjourney2">
+        <img src="https://github.com/soham-newjourney2.png?size=100" width="80" alt="Soham Chowdhury"><br>
+        <sub><b>Soham Chowdhury</b></sub>
+      </a><br>
+      <sub>@soham-newjourney2</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/Saswata427">
+        <img src="https://github.com/Saswata427.png?size=100" width="80" alt="NAME"><br>
+        <sub><b>Saswata Biswas</b></sub>
+      </a><br>
+      <sub>@Saswata427</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/srijoyeemisra">
+        <img src="https://github.com/srijoyeemisra.png?size=100" width="80" alt="NAME"><br>
+        <sub><b>Srijoyee Misra</b></sub>
+      </a><br>
+      <sub>@srijoyeemisra</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/blacksayan6">
+        <img src="https://github.com/blacksayan6.png?size=100" width="80" alt="NAME"><br>
+        <sub><b>Sayan Roy Chowdhury</b></sub>
+      </a><br>
+      <sub>@blacksayan6</sub>
+    </td>
+  </tr>
+</table>
+
