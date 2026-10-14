@@ -151,38 +151,54 @@ This is a hackathon-scale prototype, and we'd rather say so up front:
 - **Training runs while you wait.** Four predefined scikit-learn models, small datasets, no custom code. Fine for a demo, not for big workloads.
 - **Files up to 20 MB** (CSV, Excel or JSON). Drift analysis is per column.
 
-## Contributors
+## The team
 
+<div align="center">
 <table>
   <tr>
-    <td align="center">
+    <td align="center" width="25%">
       <a href="https://github.com/soham-newjourney2">
-        <img src="https://github.com/soham-newjourney2.png?size=100" width="80" alt="Soham Chowdhury"><br>
-        <sub><b>Soham Chowdhury</b></sub>
-      </a><br>
-      <sub>@soham-newjourney2</sub>
+        <img src="https://github.com/soham-newjourney2.png?size=200" width="110" alt="Soham Chowdhury">
+      </a>
+      <h3>Soham Chowdhury</h3>
+      <sub><b>Team Lead</b> · Backend &amp; AI support</sub><br><br>
+      <a href="https://github.com/soham-newjourney2">
+        <img src="https://img.shields.io/badge/GitHub-soham--newjourney2-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub @soham-newjourney2" height="22">
+      </a>
     </td>
-    <td align="center">
+    <td align="center" width="25%">
       <a href="https://github.com/Saswata427">
-        <img src="https://github.com/Saswata427.png?size=100" width="80" alt="NAME"><br>
-        <sub><b>Saswata Biswas</b></sub>
-      </a><br>
-      <sub>@Saswata427</sub>
+        <img src="https://github.com/Saswata427.png?size=200" width="110" alt="Saswata Biswas">
+      </a>
+      <h3>Saswata Biswas</h3>
+      <sub>Blockchain</sub><br><br>
+      <a href="https://github.com/Saswata427">
+        <img src="https://img.shields.io/badge/GitHub-Saswata427-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub @Saswata427" height="22">
+      </a>
     </td>
-    <td align="center">
+    <td align="center" width="25%">
       <a href="https://github.com/srijoyeemisra">
-        <img src="https://github.com/srijoyeemisra.png?size=100" width="80" alt="NAME"><br>
-        <sub><b>Srijoyee Misra</b></sub>
-      </a><br>
-      <sub>@srijoyeemisra</sub>
+        <img src="https://github.com/srijoyeemisra.png?size=200" width="110" alt="Srijoyee Misra">
+      </a>
+      <h3>Srijoyee Misra</h3>
+      <sub>Frontend</sub><br><br>
+      <a href="https://github.com/srijoyeemisra">
+        <img src="https://img.shields.io/badge/GitHub-srijoyeemisra-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub @srijoyeemisra" height="22">
+      </a>
     </td>
-    <td align="center">
+    <td align="center" width="25%">
       <a href="https://github.com/blacksayan6">
-        <img src="https://github.com/blacksayan6.png?size=100" width="80" alt="NAME"><br>
-        <sub><b>Sayan Roy Chowdhury</b></sub>
-      </a><br>
-      <sub>@blacksayan6</sub>
+        <img src="https://github.com/blacksayan6.png?size=200" width="110" alt="Sayan Roy Chowdhury">
+      </a>
+      <h3>Sayan Roy Chowdhury</h3>
+      <sub>AI &amp; ML</sub><br><br>
+      <a href="https://github.com/blacksayan6">
+        <img src="https://img.shields.io/badge/GitHub-blacksayan6-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub @blacksayan6" height="22">
+      </a>
     </td>
   </tr>
 </table>
+
+<sub>Built with care for reproducible research. Ideas, issues and pull requests are welcome.</sub>
+</div>
 
